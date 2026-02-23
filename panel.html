@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Franz</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+--bg:#0d0d0f;--surface:#16161a;--border:#2a2a35;
+--accent:#4a9eff;--accent2:#ff6b35;
+--text:#e8e8f0;--text-dim:#6b6b80;--text-mid:#a0a0b8;
+--ok:#3ecf8e;--warn:#f0a000;--err:#ff4455;
+--radius:8px;--mono:"Cascadia Code","Fira Code","Consolas",monospace;
+--split-x:62%;--split-y:55%;
+}
+html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,sans-serif;font-size:13px}
+#root{display:grid;width:100vw;height:calc(100vh - 22px);grid-template-columns:var(--split-x) 4px 1fr;grid-template-rows:var(--split-y) 4px 1fr}
+#gutter-v{grid-column:2;grid-row:1/4;background:var(--border);cursor:col-resize;transition:background .15s;z-index:10}
+#gutter-v:hover{background:var(--accent)}
+#gutter-h{grid-column:3;grid-row:2;background:var(--border);cursor:row-resize;transition:background .15s;z-index:10}
+#gutter-h:hover{background:var(--accent)}
+#cross{grid-column:2;grid-row:2;background:var(--accent);cursor:move;z-index:20;border-radius:2px}
+#pane-canvas{grid-column:1;grid-row:1/4;overflow:hidden;position:relative}
+#pane-vlm{grid-column:3;grid-row:1;overflow:hidden;display:flex;flex-direction:column}
+#pane-log{grid-column:3;grid-row:3;overflow:hidden;display:flex;flex-direction:column}
+.pane-header{display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--surface);border-bottom:1px solid var(--border);flex-shrink:0;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--text-dim)}
+.pane-header .badge{margin-left:auto;padding:1px 7px;border-radius:20px;font-size:10px;font-weight:700;letter-spacing:.04em;background:var(--border);color:var(--text-mid)}
+.pane-header .badge.ok{background:#1a3d2e;color:var(--ok)}
+.pane-header .badge.warn{background:#3d2e00;color:var(--warn)}
+.pane-header .badge.err{background:#3d0a10;color:var(--err)}
+.pane-body{flex:1;overflow:auto;padding:10px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+#canvas-wrap{width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:#080809;position:relative}
+#canvas-stack{position:relative}
+#canvas-stack canvas{position:absolute;top:0;left:0}
+#c-base{position:relative;display:block}
+#c-ghost,#c-heat{pointer-events:none}
+.canvas-status{position:absolute;bottom:8px;right:10px;font-size:10px;color:var(--text-dim);font-family:var(--mono);pointer-events:none}
+#vlm-raw{font-family:var(--mono);font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;color:var(--text-mid)}
+#vlm-raw .obs{color:#a0d4ff}
+#vlm-raw .acts{color:#ffd080}
+#log-list{font-family:var(--mono);font-size:11px;line-height:1.5;list-style:none}
+#log-list li{padding:1px 0;border-bottom:1px solid #1a1a20}
+#log-list li.info{color:var(--text-dim)}
+#log-list li.ok{color:var(--ok)}
+#log-list li.warn{color:var(--warn)}
+#log-list li.error{color:var(--err)}
+#log-list li time{color:#3a3a50;margin-right:6px}
+#statusbar{position:fixed;bottom:0;left:0;right:0;height:22px;line-height:22px;background:var(--surface);border-top:1px solid var(--border);display:flex;gap:0;font-size:11px;z-index:100}
+.sb-item{padding:0 12px;border-right:1px solid var(--border);color:var(--text-dim)}
+.sb-item span{color:var(--text-mid)}
+.sb-phase{color:var(--accent)!important}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:#44445a}
+</style>
+</head>
+<body>
+<div id="root">
+<div id="pane-canvas">
+<div class="pane-header">Annotated View<span class="badge" id="badge-img">--</span></div>
+<div id="canvas-wrap">
+<div id="canvas-stack">
+<canvas id="c-base"></canvas>
+<canvas id="c-ghost"></canvas>
+<canvas id="c-heat"></canvas>
+</div>
+<div class="canvas-status" id="canvas-status">no frame</div>
+</div>
+</div>
+<div id="gutter-v"></div>
+<div id="pane-vlm">
+<div class="pane-header">VLM Output<span class="badge" id="badge-turn">turn 0</span></div>
+<div class="pane-body"><pre id="vlm-raw">Waiting...</pre></div>
+</div>
+<div id="cross"></div>
+<div id="gutter-h"></div>
+<div id="pane-log">
+<div class="pane-header">Event Log<span class="badge" id="badge-phase">init</span></div>
+<div class="pane-body"><ul id="log-list"></ul></div>
+</div>
+</div>
+<div id="statusbar">
+<div class="sb-item">Franz</div>
+<div class="sb-item">phase: <span class="sb-phase" id="sb-phase">--</span></div>
+<div class="sb-item">turn: <span id="sb-turn">0</span></div>
+<div class="sb-item">msg: <span id="sb-msg">0</span></div>
+<div class="sb-item">seq: <span id="sb-seq">--</span></div>
+<div class="sb-item">lv: <span id="sb-lv">-</span></div>
+<div class="sb-item">ghosts: <span id="sb-ghosts">0</span></div>
+<div class="sb-item" id="sb-error" style="color:var(--err);display:none"></div>
+</div>
+<script type="module">
+'use strict';
+let CFG={ui:{},capture_width:512,capture_height:288};
+
+async function loadConfig(){
+try{const r=await fetch('/config');if(r.ok)CFG=await r.json();uiLog('config loaded','ok')}
+catch(e){uiLog('config fail: '+e,'error')}
+}
+
+const logList=document.getElementById('log-list');
+function uiLog(msg,level='info'){
+const li=document.createElement('li');li.className=level;
+const t=document.createElement('time');
+t.textContent=new Date().toLocaleTimeString('en-GB',{hour12:false});
+li.appendChild(t);li.appendChild(document.createTextNode(msg));
+logList.prepend(li);
+while(logList.children.length>200)logList.removeChild(logList.lastChild);
+}
+
+const root=document.getElementById('root');
+let splitX=parseFloat(localStorage.getItem('fsx')||'62');
+let splitY=parseFloat(localStorage.getItem('fsy')||'55');
+function applyLayout(){
+root.style.gridTemplateColumns=splitX+'% 4px 1fr';
+root.style.gridTemplateRows=splitY+'% 4px 1fr';
+}
+applyLayout();
+
+function dragger(fn){
+return function(e){
+e.preventDefault();
+const mv=ev=>fn(ev);
+const up=()=>{window.removeEventListener('mousemove',mv);window.removeEventListener('mouseup',up)};
+window.addEventListener('mousemove',mv);window.addEventListener('mouseup',up);
+};
+}
+document.getElementById('gutter-v').addEventListener('mousedown',dragger(e=>{
+splitX=Math.max(15,Math.min(85,(e.clientX/innerWidth)*100));
+localStorage.setItem('fsx',splitX);applyLayout();fitCanvas();
+}));
+document.getElementById('gutter-h').addEventListener('mousedown',dragger(e=>{
+splitY=Math.max(15,Math.min(85,(e.clientY/innerHeight)*100));
+localStorage.setItem('fsy',splitY);applyLayout();fitCanvas();
+}));
+document.getElementById('cross').addEventListener('mousedown',dragger(e=>{
+splitX=Math.max(15,Math.min(85,(e.clientX/innerWidth)*100));
+splitY=Math.max(15,Math.min(85,(e.clientY/innerHeight)*100));
+localStorage.setItem('fsx',splitX);localStorage.setItem('fsy',splitY);applyLayout();fitCanvas();
+}));
+
+const cBase=document.getElementById('c-base');
+const cGhost=document.getElementById('c-ghost');
+const cHeat=document.getElementById('c-heat');
+const stack=document.getElementById('canvas-stack');
+const wrap=document.getElementById('canvas-wrap');
+const ctxBase=cBase.getContext('2d');
+const ctxGhost=cGhost.getContext('2d');
+const ctxHeat=cHeat.getContext('2d');
+
+let cW=0,cH=0;
+const N=1000;
+const px=v=>(Number(v)||0)*cW/N;
+const py=v=>(Number(v)||0)*cH/N;
+
+function resizeC(w,h){
+if(cW===w&&cH===h)return;
+cW=w;cH=h;
+[cBase,cGhost,cHeat].forEach(c=>{c.width=w;c.height=h});
+stack.style.width=w+'px';stack.style.height=h+'px';
+}
+
+function fitCanvas(){
+if(!cW||!cH)return;
+const ww=wrap.clientWidth-4,wh=wrap.clientHeight-4;
+const sc=Math.min(ww/cW,wh/cH,1);
+const dw=Math.round(cW*sc),dh=Math.round(cH*sc);
+stack.style.width=dw+'px';stack.style.height=dh+'px';
+[cBase,cGhost,cHeat].forEach(c=>{c.style.width=dw+'px';c.style.height=dh+'px'});
+}
+window.addEventListener('resize',fitCanvas);
+
+function blob(x,y,r,stops,ctx,alpha){
+ctx.save();
+if(alpha!==undefined)ctx.globalAlpha*=Math.max(0,Math.min(1,alpha));
+const g=ctx.createRadialGradient(x,y,0,x,y,r);
+for(const[p,c]of stops)g.addColorStop(p,c);
+ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fillStyle=g;ctx.fill();
+ctx.restore();
+}
+
+let heatTrail=[];
+
+function drawOrangeHeat(actions,alphaMul,shrinkMul){
+const c=(CFG.ui?.executed_heat)||{};
+if(c.enabled===false)return;
+const rs=c.radius_scale??0.18;
+const stops=c.stops??[[0,'rgba(255,60,0,0.80)'],[0.3,'rgba(255,100,0,0.55)'],[0.65,'rgba(255,140,0,0.20)'],[1,'rgba(255,160,0,0)']];
+const ds=c.drag_steps??12;
+const am=Number(alphaMul)||1;
+const sm=Number(shrinkMul);const sh=isFinite(sm)&&sm>0?sm:1;
+const r=Math.max(cW,cH)*rs*sh;
+for(const a of actions){
+const x1=px(a.x1),y1=py(a.y1);
+if(a.x2!==undefined&&a.y2!==undefined){
+const x2=px(a.x2),y2=py(a.y2);
+for(let i=0;i<=ds;i++){
+const t=i/ds;
+const cx=x1+(x2-x1)*t,cy=y1+(y2-y1)*t;
+const sr=r*(0.5+0.5*Math.sin(t*Math.PI));
+blob(cx,cy,sr,stops,ctxHeat,am*(0.6+0.4*t));
+}
+}else{
+blob(x1,y1,r,stops,ctxHeat,am);
+}
+}
+}
+
+function drawOrangeTrail(seq,actions){
+const c=(CFG.ui?.executed_heat)||{};
+const n=Math.max(1,Number(c.trail_turns??1)||1);
+if(n<=1){heatTrail.length=0;drawOrangeHeat(actions);return}
+if(heatTrail.length&&seq<=heatTrail[heatTrail.length-1].seq)heatTrail.length=0;
+if(heatTrail.length&&heatTrail[heatTrail.length-1].seq===seq)heatTrail[heatTrail.length-1].actions=actions;
+else heatTrail.push({seq,actions});
+while(heatTrail.length>n)heatTrail.shift();
+const sb=Number(c.trail_shrink??1);const s=isFinite(sb)&&sb>0?sb:1;
+const L=heatTrail.length;
+for(let i=0;i<L;i++){
+const age=L-1-i;
+drawOrangeHeat(heatTrail[i].actions,(i+1)/L,s===1?1:Math.pow(s,age));
+}
+}
+
+let ghostCache=new Map();
+
+function drawGhosts(ghosts){
+const gc=(CFG.ui?.ghosts)||{};
+if(gc.enabled===false)return;
+const opBase=gc.opacity_base??0.35;
+const opDecay=gc.opacity_decay??0.55;
+const edgeGlow=gc.edge_glow!==false;
+const edgeColor=gc.edge_color??'rgba(60,140,255,0.25)';
+const edgeWidth=gc.edge_width??1;
+ctxGhost.clearRect(0,0,cW,cH);
+for(const g of ghosts){
+const alpha=opBase*Math.pow(opDecay,g.age);
+if(alpha<0.01)continue;
+const x1=px(g.x1),y1=py(g.y1),x2=px(g.x2),y2=py(g.y2);
+const gw=x2-x1,gh=y2-y1;
+if(gw<=0||gh<=0)continue;
+const key=g.turn+'_'+g.x1+'_'+g.y1+'_'+g.x2+'_'+g.y2;
+let img=ghostCache.get(key);
+if(!img){
+img=new Image();
+img.src='data:image/png;base64,'+g.image_b64;
+ghostCache.set(key,img);
+}
+if(img.complete&&img.naturalWidth>0){
+ctxGhost.save();
+ctxGhost.globalAlpha=alpha;
+ctxGhost.drawImage(img,x1,y1,gw,gh);
+ctxGhost.restore();
+if(edgeGlow){
+ctxGhost.save();
+ctxGhost.globalAlpha=alpha*0.6;
+ctxGhost.strokeStyle=edgeColor;
+ctxGhost.lineWidth=edgeWidth;
+ctxGhost.strokeRect(x1,y1,gw,gh);
+ctxGhost.restore();
+}
+}
+}
+if(ghostCache.size>50){
+const keys=[...ghostCache.keys()];
+for(let i=0;i<keys.length-30;i++)ghostCache.delete(keys[i]);
+}
+}
+
+function loadBase(b64){
+return new Promise((res,rej)=>{
+const img=new Image();
+img.onload=()=>{resizeC(img.naturalWidth,img.naturalHeight);ctxBase.drawImage(img,0,0);fitCanvas();res()};
+img.onerror=rej;
+img.src='data:image/png;base64,'+b64;
+});
+}
+
+function exportAnn(){
+const off=new OffscreenCanvas(cW,cH);
+const ctx=off.getContext('2d');
+ctx.drawImage(cBase,0,0);ctx.drawImage(cGhost,0,0);ctx.drawImage(cHeat,0,0);
+return new Promise(res=>{
+off.convertToBlob({type:'image/png'}).then(b=>{
+const rd=new FileReader();
+rd.onload=()=>res(rd.result.split(',')[1]);
+rd.readAsDataURL(b);
+});
+});
+}
+
+const vlmPre=document.getElementById('vlm-raw');
+function renderVlm(raw){
+const esc=s=>s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+try{
+const o=JSON.parse(raw);
+const obs=o.observation||o.phenomenology||'';
+const ac=JSON.stringify(o.actions||[],null,2);
+const bb=JSON.stringify(o.bboxes||[],null,2);
+vlmPre.innerHTML='<span class="obs">'+esc(obs)+'</span>\n\nbboxes:\n'+esc(bb)+'\n\n<span class="acts">actions:\n'+esc(ac)+'</span>';
+}catch{vlmPre.innerHTML=esc(raw)}
+}
+
+function updateSB(s){
+document.getElementById('sb-phase').textContent=s.phase??'--';
+document.getElementById('sb-turn').textContent=s.turn??0;
+document.getElementById('sb-msg').textContent=s.msg_id??0;
+document.getElementById('sb-seq').textContent=s.pending_seq??'--';
+document.getElementById('sb-lv').textContent=s.parse_level??'-';
+document.getElementById('sb-ghosts').textContent=s.ghost_count??0;
+const ee=document.getElementById('sb-error');
+if(s.error){ee.style.display='';ee.textContent='err: '+s.error}else{ee.style.display='none'}
+const bp=document.getElementById('badge-phase');
+bp.textContent=s.phase??'--';
+bp.className=s.phase==='error'||s.phase==='vlm_error'?'badge err':s.phase==='running'||s.phase==='calling_vlm'?'badge ok':'badge warn';
+document.getElementById('badge-turn').textContent='turn '+s.turn;
+document.getElementById('canvas-status').textContent=cW?cW+'x'+cH:'no frame';
+}
+
+let lastMsg=-1,lastPSeq=-1,busy=false;
+
+async function postAnn(seq,b64){
+try{
+const r=await fetch('/annotated',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({seq,image_b64:b64})});
+const j=await r.json();
+uiLog('/ann seq='+seq+' ok='+j.ok,j.ok?'ok':'error');return j.ok;
+}catch(e){uiLog('/ann fail: '+e,'error');return false}
+}
+
+async function fetchFrame(){
+try{const r=await fetch('/frame');return r.ok?await r.json():null}catch{return null}
+}
+
+async function fetchGhosts(){
+try{const r=await fetch('/ghosts');return r.ok?await r.json():null}catch{return null}
+}
+
+async function handleFrame(state){
+if(busy)return;busy=true;
+try{
+const seq=state.pending_seq;
+const[f,gd]=await Promise.all([fetchFrame(),fetchGhosts()]);
+if(!f||!f.raw_b64||f.raw_b64.length<100){uiLog('frame fetch fail','error');return}
+document.getElementById('badge-img').textContent='seq '+seq;
+document.getElementById('badge-img').className='badge warn';
+await loadBase(f.raw_b64);
+ctxGhost.clearRect(0,0,cW,cH);
+ctxHeat.clearRect(0,0,cW,cH);
+if(gd&&gd.ghosts)drawGhosts(gd.ghosts);
+drawOrangeTrail(seq,state.actions||[]);
+if(state.vlm_json)renderVlm(state.vlm_json);
+const ab=await exportAnn();
+uiLog('exported ann len='+ab.length,'ok');
+const ok=await postAnn(seq,ab);
+document.getElementById('badge-img').textContent=ok?'seq '+seq+' ok':'seq '+seq+' fail';
+document.getElementById('badge-img').className=ok?'badge ok':'badge err';
+}catch(e){uiLog('frame err: '+e,'error')}finally{busy=false}
+}
+
+async function poll(){
+try{
+const r=await fetch('/state');
+if(!r.ok){uiLog('/state '+r.status,'warn');return}
+const s=await r.json();
+updateSB(s);
+if(s.msg_id!==lastMsg&&s.vlm_json){lastMsg=s.msg_id;renderVlm(s.vlm_json)}
+if(s.phase==='waiting_annotated'&&s.pending_seq>0&&s.pending_seq!==lastPSeq){
+lastPSeq=s.pending_seq;
+await handleFrame(s);
+}
+}catch(e){uiLog('poll: '+e,'warn')}
+}
+setInterval(poll,400);
+
+(async()=>{
+uiLog('Franz panel starting','info');
+await loadConfig();
+uiLog('capture: '+CFG.capture_width+'x'+CFG.capture_height,'info');
+})();
+</script>
+</body>
+</html>
